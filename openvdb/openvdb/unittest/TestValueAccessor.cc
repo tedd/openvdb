@@ -7,7 +7,9 @@
 #include <gtest/gtest.h>
 #include <tbb/task_group.h>
 
+#include <memory>
 #include <type_traits>
+#include <vector>
 
 
 using Tree2Type = openvdb::tree::Tree<
@@ -701,4 +703,96 @@ TEST_F(TestValueAccessor, testBypassLeafAPI)
     static_assert(!ValueAccessor1<FloatTree, true, 1>::BypassLeafAPI);
     static_assert(!ValueAccessor2<FloatTree, true, 1, 2>::BypassLeafAPI);
     static_assert(!ValueAccessor3<MaskTree, true, 0, 1, 2>::BypassLeafAPI);
+}
+
+TEST_F(TestValueAccessor, testRevisitedLeavesAfterInvalidation)
+{
+    TreeType tree(0.0f);
+    ValueAccessor<TreeType> acc(tree);
+    std::vector<openvdb::Coord> coords;
+    for (int x = -2; x < 2; ++x) {
+        for (int y = -2; y < 2; ++y) {
+            for (int z = -2; z < 2; ++z) {
+                coords.emplace_back(x * 8, y * 8, z * 8);
+                acc.setValue(coords.back(), float(coords.size()));
+            }
+        }
+    }
+    // Revisit every secondary slot, then a colliding signed origin.
+    for (size_t i = 0; i < coords.size(); ++i) {
+        EXPECT_EQ(float(i + 1), acc.getValue(coords[i]));
+    }
+    const openvdb::Coord collision = coords.front() + openvdb::Coord(32, 0, 0);
+    acc.setValue(collision, 99.0f);
+    EXPECT_EQ(1.0f, acc.getValue(coords.front()));
+    EXPECT_EQ(99.0f, acc.getValue(collision));
+    auto copy = acc;
+    TreeType other(-1.0f);
+    ValueAccessor<TreeType> assigned(other);
+    assigned = acc;
+    // Node replacement requires clearing the registered accessors first.
+    tree.clearAllAccessors();
+    tree.addTile(1, coords.front(), 17.0f, false);
+    for (auto* accessor : {&acc, &copy, &assigned}) {
+        EXPECT_EQ(17.0f, accessor->getValue(coords.front()));
+        EXPECT_FALSE(accessor->isValueOn(coords.front()));
+    }
+    for (auto* accessor : {&acc, &copy, &assigned}) {
+        accessor->setValue(coords.front(), 23.0f);
+        EXPECT_TRUE(accessor->isValueOn(coords.front()));
+    }
+    delete tree.stealNode<TreeType::LeafNodeType>(collision, 41.0f, false);
+    for (auto* accessor : {&acc, &copy, &assigned}) {
+        EXPECT_EQ(41.0f, accessor->getValue(collision));
+        EXPECT_FALSE(accessor->isValueOn(collision));
+    }
+    acc.eraseNode<TreeType::LeafNodeType>();
+    acc.clear();
+    EXPECT_EQ(23.0f, acc.getValue(coords.front()));
+    tree.clear();
+    for (auto* accessor : {&acc, &copy, &assigned}) {
+        EXPECT_EQ(0.0f, accessor->getValue(coords.front()));
+        EXPECT_EQ(0.0f, accessor->getValue(collision));
+    }
+}
+
+TEST_F(TestValueAccessor, testRevisitedLeafMixedOperations)
+{
+    TreeType tree(0.0f);
+    ValueAccessor<TreeType> acc(tree);
+    const openvdb::Coord first(-8, -8, -8), second(8, 8, 8);
+    acc.setValue(first, 3.0f);
+    acc.setValue(second, 7.0f);
+    acc.setValueOff(first, 11.0f);
+    acc.getValue(second);
+    acc.setValueOnly(first, 13.0f);
+    EXPECT_FALSE(acc.isValueOn(first));
+    EXPECT_EQ(13.0f, acc.getValue(first));
+    acc.getValue(second);
+    acc.setValue(first, 17.0f);
+    float value = 0.0f;
+    EXPECT_TRUE(acc.probeValue(first, value));
+    EXPECT_EQ(17.0f, value);
+    EXPECT_EQ(tree.getValueDepth(first), acc.getValueDepth(first));
+    acc.modifyValue(first, [](float& v) { v += 2.0f; });
+    EXPECT_EQ(19.0f, tree.getValue(first));
+    const ValueAccessor<const TreeType> reader(tree);
+    EXPECT_EQ(19.0f, reader.getValue(first));
+    EXPECT_EQ(7.0f, reader.getValue(second));
+    EXPECT_EQ(19.0f, reader.getValue(first));
+}
+
+TEST_F(TestValueAccessor, testRevisitedLeavesAfterTreeDestruction)
+{
+    auto tree = std::make_unique<TreeType>(0.0f);
+    ValueAccessor<TreeType> acc(*tree);
+    acc.setValue(openvdb::Coord(-8), 3.0f);
+    acc.setValue(openvdb::Coord(8), 7.0f);
+    EXPECT_EQ(3.0f, acc.getValue(openvdb::Coord(-8)));
+    auto copy = acc;
+    tree.reset();
+    EXPECT_EQ(nullptr, acc.getTree());
+    EXPECT_EQ(nullptr, copy.getTree());
+    EXPECT_EQ(nullptr, acc.getNode<TreeType::LeafNodeType>());
+    EXPECT_EQ(nullptr, copy.getNode<TreeType::LeafNodeType>());
 }

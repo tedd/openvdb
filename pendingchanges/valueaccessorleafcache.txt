@@ -1,0 +1,2 @@
+Secondary leaf cache and separate primary-hit/miss paths for ValueAccessor
+getValue and setValue. Registered tree invalidation clears all cache entries.
