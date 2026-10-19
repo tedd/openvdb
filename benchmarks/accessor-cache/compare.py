@@ -10,6 +10,7 @@ parser.add_argument('--stock-source',type=Path,required=True)
 parser.add_argument('--cache-source',type=Path,required=True)
 parser.add_argument('--tbb-root',type=Path,required=True)
 parser.add_argument('--baseline-revision',default='84dca76d5759b0ca8d4d30aa473437630a357c4f')
+parser.add_argument('--lock-file',type=Path,help='Existing shared host lock; otherwise use a workspace-local lock')
 parser.add_argument('--cpu',type=int,default=16)
 parser.add_argument('--tests',action='store_true')
 args=parser.parse_args()
@@ -55,7 +56,8 @@ for v in ['stock','cache']:
  for p in list((builds[v]/'Release').glob('*.exe'))+[builds[v]/'openvdb/openvdb/Release/libopenvdb.lib']: metadata['binaries'][v+'/'+p.name]=hashlib.sha256(p.read_bytes()).hexdigest()
 ps=['powershell','-NoProfile','-Command','Get-CimInstance Win32_PerfFormattedData_PerfOS_Processor | Select-Object Name,PercentProcessorTime | ConvertTo-Json -Compress']
 metadata['cpuBefore']=json.loads(run(ps));save(raw/'environment.json',metadata)
-with (Path.home()/'.codex/locks/performance-measurement.lock').open('r+b') as lock:
+lock_path=args.lock_file.resolve() if args.lock_file else w/'performance.lock'
+with lock_path.open('r+b' if args.lock_file else 'a+b') as lock:
  lock.seek(0);msvcrt.locking(lock.fileno(),msvcrt.LK_NBLCK,1)
  runs=[]
  try:
