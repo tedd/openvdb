@@ -79,7 +79,7 @@ __declspec(noinline) uint64_t read(Accessor& a, const std::vector<openvdb::Coord
 {
     uint64_t sum = 0;
     const size_t mask = coords.size() - 1;
-    for (int i = 0; i < count; ++i) sum += a.getValue(coords[size_t(i) & mask]);
+    for (int i = 0; i < count; ++i) sum += uint64_t(a.getValue(coords[size_t(i) & mask]));
     return sum;
 }
 
