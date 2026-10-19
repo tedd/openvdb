@@ -54,6 +54,3 @@ int main(int argc,char** argv) try {
  std::cout<<"]}\n";
  openvdb::uninitialize();return 0;
 } catch(const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;}
-
-
-
